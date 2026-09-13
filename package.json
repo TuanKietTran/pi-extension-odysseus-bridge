@@ -1,0 +1,23 @@
+{
+  "name": "pi-odysseus-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenAI-compatible HTTP bridge from Odysseus to a live Pi agent session",
+  "keywords": ["pi-package", "openai", "odysseus"],
+  "license": "MIT",
+  "type": "module",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions/pi-odysseus-bridge.ts"]
+  },
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
