@@ -70,6 +70,7 @@ X-API-Key: <key>
 - System/developer messages are appended to Pi's system prompt for that request.
 - The latest user message is sent to the persistent live Pi session, so Pi maintains conversation context. Use one Odysseus conversation per Pi process/session.
 - HTTP requests are serialized. A request receives `409 pi_busy` if Pi is already processing a prompt started outside the bridge.
+- The listener is a singleton across Pi processes. If the configured address already hosts a healthy `pi-odysseus-bridge`, another extension load reuses it instead of failing with `EADDRINUSE`. An unrelated service on the same address still produces an error.
 - Keep the default loopback bind unless remote access is explicitly required. The extension has the same filesystem and shell permissions as Pi.
 
 ## Install persistently (optional)

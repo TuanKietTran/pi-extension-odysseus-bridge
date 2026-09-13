@@ -21,6 +21,8 @@ type ChatRequest = {
   user?: string;
 };
 
+type BridgeModel = NonNullable<ExtensionContext["model"]>;
+
 type ActiveRequest = {
   id: string;
   model: string;
@@ -29,6 +31,7 @@ type ActiveRequest = {
   text: string;
   done: boolean;
   timer: NodeJS.Timeout;
+  error?: Error;
   resolve: () => void;
   reject: (error: Error) => void;
 };
@@ -43,26 +46,28 @@ export default function piOdysseusBridge(pi: ExtensionAPI) {
     context = ctx;
     if (server) return;
 
-    server = createServer((req, res) => {
+    const candidate = createServer((req, res) => {
       void route(req, res).catch((error: unknown) => {
         if (!res.headersSent) sendError(res, 500, errorMessage(error), "server_error");
         else if (!res.writableEnded) res.end();
       });
     });
 
-    server.on("clientError", (_error, socket) => {
+    candidate.on("clientError", (_error, socket) => {
       socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
     });
 
-    await new Promise<void>((resolve, reject) => {
-      server!.once("error", reject);
-      server!.listen(PORT, HOST, () => {
-        server!.off("error", reject);
-        resolve();
-      });
-    });
-
-    ctx.ui.notify(`Pi OpenAI bridge: http://${HOST}:${PORT}/v1`, "info");
+    try {
+      await listen(candidate);
+      server = candidate;
+      ctx.ui.notify(`Pi OpenAI bridge: http://${HOST}:${PORT}/v1`, "info");
+    } catch (error) {
+      candidate.close();
+      if (!isAddressInUse(error) || !(await existingBridgeIsHealthy())) throw error;
+      // Another Pi process owns the one bridge daemon. Loading this extension
+      // is still successful; do not tear down that process's server on exit.
+      ctx.ui.notify(`Pi OpenAI bridge already running at http://${HOST}:${PORT}/v1`, "info");
+    }
   });
 
   pi.on("model_select", (_event, ctx) => {
@@ -86,9 +91,17 @@ export default function piOdysseusBridge(pi: ExtensionAPI) {
     }
   });
 
+  pi.on("message_end", (event) => {
+    if (!active || event.message.role !== "assistant") return;
+    if (event.message.stopReason === "error" || event.message.stopReason === "aborted") {
+      active.error = new Error(event.message.errorMessage ?? `Pi request ${event.message.stopReason}`);
+    }
+  });
+
   pi.on("agent_settled", () => {
     if (!active) return;
-    finishActive();
+    if (active.error) failActive(active.error);
+    else finishActive();
   });
 
   pi.on("session_shutdown", async () => {
@@ -275,8 +288,8 @@ export default function piOdysseusBridge(pi: ExtensionAPI) {
     request.reject(error);
   }
 
-  function availableModels(): Array<{ id: string; provider: string; created?: number }> {
-    return (context?.modelRegistry.getAvailable() ?? []) as Array<{ id: string; provider: string; created?: number }>;
+  function availableModels(): BridgeModel[] {
+    return context?.modelRegistry.getAvailable() ?? [];
   }
 
   function activeModelId(): string {
@@ -301,6 +314,41 @@ export default function piOdysseusBridge(pi: ExtensionAPI) {
     if (data.length === 0) data.push({ id: "pi-agent", object: "model", created: 0, owned_by: "pi" });
     return { object: "list", data };
   }
+}
+
+function listen(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(PORT, HOST, () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === "EADDRINUSE";
+}
+
+async function existingBridgeIsHealthy(): Promise<boolean> {
+  const host = HOST === "0.0.0.0" ? "127.0.0.1" : HOST === "::" ? "::1" : HOST;
+  const headers = API_KEY ? { Authorization: `Bearer ${API_KEY}` } : undefined;
+  try {
+    const response = await fetch(`http://${formatUrlHost(host)}:${PORT}/health`, {
+      headers,
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) return false;
+    const body = await response.json() as { service?: unknown };
+    return body.service === "pi-odysseus-bridge";
+  } catch {
+    return false;
+  }
+}
+
+function formatUrlHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
 function modelId(model: { id: string; provider: string }): string {
