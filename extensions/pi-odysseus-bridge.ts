@@ -134,7 +134,7 @@ export default function piOdysseusBridge(pi: ExtensionAPI) {
     const modelMatch = pathname.match(/^\/v1\/models\/(.+)$/);
     if (req.method === "GET" && modelMatch) {
       const id = decodeURIComponent(modelMatch[1]);
-      const model = availableModels().find((candidate) => modelId(candidate) === id || candidate.id === id);
+      const model = findModel(id);
       if (!model) sendError(res, 404, `Model not found: ${id}`, "model_not_found");
       else sendJson(res, 200, modelObject(model));
       return;
@@ -179,7 +179,7 @@ export default function piOdysseusBridge(pi: ExtensionAPI) {
       sendError(res, 404, `Model not found: ${body.model}`, "model_not_found");
       return;
     }
-    if (selected && modelId(selected) !== activeModelId()) {
+    if (selected && publicModelId(selected) !== activeModelId()) {
       const switched = await pi.setModel(selected);
       if (!switched) {
         sendError(res, 401, `No authentication is available for ${body.model}`, "authentication_error");
@@ -280,13 +280,19 @@ export default function piOdysseusBridge(pi: ExtensionAPI) {
   }
 
   function activeModelId(): string {
-    return context?.model ? modelId(context.model) : "pi-agent";
+    return context?.model ? publicModelId(context.model) : "pi-agent";
   }
 
   function resolveModel(requested?: string) {
     if (!requested || requested === "pi-agent") return context?.model;
+    return findModel(requested);
+  }
+
+  // Accept the public ID, then legacy provider/id and bare model IDs.
+  function findModel(requested: string) {
     const models = availableModels();
-    return models.find((model) => modelId(model) === requested)
+    return models.find((model) => publicModelId(model) === requested)
+      ?? models.find((model) => modelId(model) === requested)
       ?? models.find((model) => model.id === requested);
   }
 
@@ -301,8 +307,17 @@ function modelId(model: { id: string; provider: string }): string {
   return `${model.provider}/${model.id}`;
 }
 
+// Odysseus drops any model whose ID contains "codex" as non-chat, so public
+// IDs use provider aliases and never contain that substring.
+const PROVIDER_ALIASES: Record<string, string> = { "openai-codex": "chatgpt" };
+
+function publicModelId(model: { id: string; provider: string }): string {
+  const provider = PROVIDER_ALIASES[model.provider] ?? model.provider;
+  return `pi/${provider}/${model.id}`.replace(/codex/gi, "cdx");
+}
+
 function modelObject(model: { id: string; provider: string; created?: number }) {
-  return { id: modelId(model), object: "model", created: model.created ?? 0, owned_by: model.provider };
+  return { id: publicModelId(model), object: "model", created: model.created ?? 0, owned_by: model.provider };
 }
 
 function chatChunk(request: Pick<ActiveRequest, "id" | "model">, delta: Record<string, string>, finishReason: string | null) {

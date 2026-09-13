@@ -25,7 +25,7 @@ The default API base is:
 http://127.0.0.1:8787/v1
 ```
 
-In Odysseus, add that URL as an OpenAI-compatible model endpoint. `/v1/models` exposes all models currently authenticated in Pi. Selecting `provider/model-id` routes the request through that Pi model.
+In Odysseus, add that URL as an OpenAI-compatible model endpoint. `/v1/models` exposes all models currently authenticated in Pi. Model IDs have the form `pi/<provider>/<model-id>` (for example `pi/claude-cli/claude-opus-5`). Selecting one routes the request through that Pi model. The `openai-codex` provider is exposed as `pi/chatgpt/...`, and any `codex` in an ID becomes `cdx`, because Odysseus treats IDs containing `codex` as non-chat models and hides them. Legacy `provider/model-id` and bare model IDs are still accepted in requests.
 
 Quick checks:
 
